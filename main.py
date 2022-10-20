@@ -125,7 +125,7 @@ def im_without_bg(content: bytes, commons: CommonQueryParams) -> Response:
     )
 
 
-@app.post('/')
+@app.get('/')
 def  index():
     return {"Error":"Not Authorized"}
 
