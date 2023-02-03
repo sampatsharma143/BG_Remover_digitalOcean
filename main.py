@@ -9,6 +9,7 @@ import time
 from enum import Enum
 from typing import IO, cast
 import filetype
+import aiohttp
 
 from rembg import remove
 
@@ -128,6 +129,25 @@ def im_without_bg(content: bytes, commons: CommonQueryParams) -> Response:
 @app.get('/')
 def  index():
     return {"Error":"Not Authorized"}
+
+@app.get(
+    path="/api/remove",
+    tags=["Background Removal"],
+    summary="Remove from URL",
+    description="Removes the background from an image obtained by retrieving an URL.",
+)
+async def get_index(
+    url: str = Query(
+        default=..., description="URL of the image that has to be processed."
+    ),
+    commons: CommonQueryParams = Depends(),
+):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            file = await response.read()
+            return await asyncify(im_without_bg)(file, commons)
+
+
 
 @app.post('/api/remove')
 async def post_index(
