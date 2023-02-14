@@ -1,5 +1,6 @@
 import imp
-from fastapi import FastAPI, Depends, File, Form, Query
+import os
+from fastapi import FastAPI, Depends, File, Form, Query,UploadFile,BackgroundTasks,Request
 from fastapi.middleware.cors import CORSMiddleware
 from asyncer import asyncify
 from starlette.responses import Response
@@ -10,14 +11,19 @@ from enum import Enum
 from typing import IO, cast
 import filetype
 import aiohttp
+import uuid
 
 from rembg import remove
 
 from rembg.session_base import BaseSession
 from rembg.session_factory import new_session
+# from aiodiskdb import AioDiskDB
+from fastapi.staticfiles import StaticFiles
+import aiofiles
 
 app = FastAPI()
 sessions: dict[str, BaseSession] = {}
+app.mount("/bgremoved", StaticFiles(directory="bgremoved"), name="bgremoved")
 
 origins = [
     "http://localhost",
@@ -109,6 +115,11 @@ class CommonQueryParams:
 
 
 def im_without_bg(content: bytes, commons: CommonQueryParams) -> Response:
+
+    # data = 
+    # with open(f"bgremoved/{filename}", "w") as f:
+    #     f.write(data)
+
     return Response(
         remove(
             content,
@@ -124,6 +135,9 @@ def im_without_bg(content: bytes, commons: CommonQueryParams) -> Response:
         ),
         media_type="image/png",
     )
+
+
+
 
 
 @app.get('/')
@@ -149,12 +163,61 @@ async def get_index(
 
 
 
-@app.post('/api/remove')
-async def post_index(
-    file: bytes = File(
-        default=...,
-        description="Image file (byte stream) that has to be processed.",
-    ),
-    commons: CommonQueryPostParams = Depends(),
-):
-    return await asyncify(im_without_bg)(file, commons)
+# @app.post('/api/remove')
+# async def post_index(
+#     file: bytes = File(
+#         default=...,
+#         description="Image file (byte stream) that has to be processed.",
+#     ),
+#     commons: CommonQueryPostParams = Depends(),
+# ):
+#     return await asyncify(im_without_bg)(file, commons)
+
+
+
+async def write_file(file: UploadFile, progress):
+    filename = str(uuid.uuid4()) + "_" +file.filename
+    file_path = f"uploads/{filename}"
+    async with aiofiles.open(file_path, "wb") as buffer:
+        while True:
+            chunk = await file.read(1024)
+            if not chunk:
+                break
+            progress += len(chunk)
+            await buffer.write(chunk)
+    return progress,file_path,filename
+
+from PIL import Image
+import io
+
+
+def im_without_bg_link(request,filename,content: bytes, commons: CommonQueryParams) -> Response:
+    data = remove(
+                content,
+                session=sessions.setdefault(
+                    commons.model.value, new_session(commons.model.value)
+                ),
+                alpha_matting=commons.a,
+                alpha_matting_foreground_threshold=commons.af,
+                alpha_matting_background_threshold=commons.ab,
+                alpha_matting_erode_size=commons.ae,
+                only_mask=commons.om,
+                post_process_mask=commons.ppm,
+            )
+    image = Image.open(io.BytesIO(data))
+    image_path_removed_bg = "bgremoved/"+filename
+    image.save(image_path_removed_bg, "PNG")
+    hostname = request.headers["host"]
+
+    return  {"image":f"http://{hostname}/"+image_path_removed_bg}
+
+
+@app.post("/api/remove")
+async def create_upload_file(request: Request,file: UploadFile = File(default=...), commons: CommonQueryPostParams = Depends()):
+    progress = 0
+    progress,file_path,filename = await write_file( file, progress)
+    with open((file_path), "rb") as f:
+        image_bytes = f.read()
+        response =  await asyncify(im_without_bg_link)(request,filename,image_bytes, commons)
+        return response
+    # return {"filename": file_path, "progress": progress}
